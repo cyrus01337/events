@@ -1,4 +1,5 @@
 import asyncio
+from collections import namedtuple
 from typing import Callable, Coroutine, Union
 
 import discord
@@ -14,27 +15,7 @@ __all__ = (
 )
 
 MaybeCoroutine = Union[Callable, Coroutine]
-
-
-class EventContext:
-    __slots__ = ("_name", "_args", "_kwargs")
-
-    def __init__(self, name, args, kwargs):
-        self._name = name
-        self._args = args
-        self._kwargs = kwargs
-
-    @property
-    def name(self):
-        return self._name
-
-    @property
-    def args(self):
-        return self._args
-
-    @property
-    def kwargs(self):
-        return self._kwargs
+EventInfo = namedtuple("EventInfo", "name args kwargs")
 
 
 class Listener:
@@ -47,11 +28,7 @@ class Listener:
             raise TypeError("listeners must be coroutines")
 
         self._callback = callback
-
-        try:
-            self.checks = self._callback.__listener_checks__
-        except AttributeError:
-            self.checks = []
+        self.checks = getattr(callback, "__listener_checks__", [])
 
     async def __call__(self, *args, **kwargs):
         if await self.can_run(*args, **kwargs):
@@ -76,15 +53,20 @@ class Listener:
         return True
 
 
-class EventNamespace:
-    __slots__ = ("app", "_event_checks")
+class Extension:
+    __slots__ = (
+        "_event_checks",
+    )
 
-    def __init__(self, app: Union[discord.Client, commands.Bot]):
-        self.app = app
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
         self._event_checks = []
 
     def check(self, check: MaybeCoroutine):
+        """
+        Add a global check that acts as a pre-dispatch hook for events
+        """
         self._event_checks.append(check)
 
         return check
@@ -95,6 +77,10 @@ class EventNamespace:
         pass
 
     def listen(self, name: str = None):
+        """
+
+        """
+
         def predicate(function: Union[Coroutine, Listener]):
             nonlocal name
 
@@ -103,7 +89,7 @@ class EventNamespace:
             if not isinstance(name, str):
                 raise TypeError("name of a listener must be a string")
 
-            events = self.app.extra_events.setdefault(name, [])
+            events = self.extra_events.setdefault(name, [])
             listener = Listener(function)
 
             events.append(listener)
@@ -111,26 +97,15 @@ class EventNamespace:
             return listener
         return predicate
 
-    async def can_event_run(self, event_name, *args, **kwargs):
+    async def can_event_run(self, event, *args, **kwargs):
         if not self._event_checks:
             return True
-        event = EventContext(f"on_{event_name}", args, kwargs)
+        info = EventInfo(f"on_{event}", args, kwargs)
 
         return await discord.utils.async_all(
-            discord.utils.maybe_coroutine(check, event)
+            discord.utils.maybe_coroutine(check, info)
             for check in self._event_checks
         )
-
-
-class Extension:
-    __slots__ = (
-        "events",
-    )
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-        self.events = EventNamespace(app=self)
 
     async def ext_dispatch(self, event, *args, **kwargs):
         if await self.events.can_event_run(event, *args, **kwargs):
@@ -140,13 +115,16 @@ class Extension:
         self.loop.create_task(self.ext_dispatch(event, *args, **kwargs))
 
 
+def extend(bot: commands.Bot):
+    Extension.__init__(bot)
+
+
 def check(check: MaybeCoroutine):
     def predicate(function: Union[Coroutine, Listener]):
         if asyncio.iscoroutinefunction(function):
-            try:
-                function.__listener_checks__.append(check)
-            except AttributeError:
-                function.__listener_checks__ = [check]
+            if not hasattr(function, "__listener_checks__"):
+                function.__listener_checks__ = []
+            function.__listener_checks__.append(check)
         elif isinstance(function, Listener):
             function.checks.append(check)
         return function
