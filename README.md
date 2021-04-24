@@ -1,3 +1,5 @@
+# ABANDONED UNTIL FURTHER NOTICE
+
 # Events
 ...is an extension that allows the creation of checks on top of existing events and listeners for applications that utilise Discord.py - a library for creating Discord bots in Python. This extension was developed with cog-agnosticism in mind, however, this is intended for bots that sub-class `commands.Bot`.
 
